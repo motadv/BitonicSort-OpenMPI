@@ -14,19 +14,19 @@ int verbose = 0;
 int verify = 0;
 
 // Variáveis de tempo
-double timer_start;
-double timer_end;
+double timer_inicio;
+double timer_fim;
 
 // Variáveis MPI
-int process_rank;
+int rank;
 int num_processos;
 
 // Variáveis de entrada
-int *input_numbers;
+int *vetor_input;
 int input_n;
 
 // Variáveis locais
-int *local_numbers;
+int *vetor_local;
 int local_n;
 
 // Variáveis de comunicação
@@ -39,7 +39,7 @@ int main(int argc, char *argv[])
     // Inicializa o MPI
     MPI_Init(&argc, &argv);
     MPI_Comm_size(MPI_COMM_WORLD, &num_processos);
-    MPI_Comm_rank(MPI_COMM_WORLD, &process_rank);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
     // Verificação de erros
     if (num_processos < 2)
@@ -52,7 +52,7 @@ int main(int argc, char *argv[])
     // Verificar se foi passado o arquivo de entrada
     if (argc != 2)
     {
-        if (process_rank == MASTER)
+        if (rank == MASTER)
         {
             printf("Uso: %s <arquivo_de_entrada>\n", argv[0]);
         }
@@ -61,15 +61,15 @@ int main(int argc, char *argv[])
     }
 
     // Verifica se o número de processos é uma potência de 2
-    int power_of_two = 1;
-    while (power_of_two < num_processos)
+    int potencia_de_dois = 1;
+    while (potencia_de_dois < num_processos)
     {
-        power_of_two *= 2;
+        potencia_de_dois *= 2;
     }
-    if (power_of_two != num_processos)
+    if (potencia_de_dois != num_processos)
     {
         printf("O número de processos deve ser uma potência de 2.\n");
-        free(input_numbers);
+        free(vetor_input);
         MPI_Finalize();
         return 1;
     }
@@ -83,7 +83,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    if (process_rank == 0)
+    if (rank == 0)
     {
         // Processo coordenador abre arquivo de entrada
         FILE *file = fopen(filename, "r");
@@ -95,7 +95,7 @@ int main(int argc, char *argv[])
         }
 
         input_n = 0;
-        int list_size = 0;
+        int tamanho_lista_preenchida = 0;
 
         // Lê o número de elementos no arquivo
         // Arquivos de numeros começam com a quantidade de elementos na primeira linha
@@ -105,25 +105,25 @@ int main(int argc, char *argv[])
         // Como o bitonic sort necessita que a quantidade de elementos seja múltipla do numero de processos
         if (input_n % num_processos == 0)
         {
-            list_size = input_n;
+            tamanho_lista_preenchida = input_n;
         }
         else
         {
-            list_size = input_n + (num_processos - input_n % num_processos);
+            tamanho_lista_preenchida = input_n + (num_processos - input_n % num_processos);
         }
         // list_size = (int)pow(2, ceil(log2(input_n)));
-        printf("Tamanho da lista alocada: %d \n", list_size);
+        printf("Tamanho da lista alocada: %d \n", tamanho_lista_preenchida);
 
         // Aloca memória para armazenar os números
         // Decidimos guardar os numeros de entrada todos no processo 0 e depois distribuir
         // Poderiamos ter lido os números em todos os processos, mas isso complicaria o código
-        input_numbers = (int *)malloc(list_size * sizeof(int));
+        vetor_input = (int *)malloc(tamanho_lista_preenchida * sizeof(int));
 
         // Lê os números do arquivo e preenche no vetor
         int i;
         for (i = 0; i < input_n; i++)
         {
-            fscanf(file, "%d", &input_numbers[i]);
+            fscanf(file, "%d", &vetor_input[i]);
         }
         // Fecha o arquivo
         fclose(file);
@@ -131,30 +131,30 @@ int main(int argc, char *argv[])
         // Continua depois de N preenchendo com um valor lixo para ser ignorado
         // Usamos o máximo inteiro para garantir que todos esses dados ficarão no final da lista ordenada
         // Na hora de salvar a lista ordenada ou imprimir, basta ignorar os valores maiores que N
-        for (i; i < list_size; i++)
+        for (i; i < tamanho_lista_preenchida; i++)
         {
-            input_numbers[i] = __INT_MAX__;
+            vetor_input[i] = __INT_MAX__;
         }
 
         // Determina o tamanho do array local que cada processo precisa ter
-        local_n = (list_size / num_processos);
+        local_n = (tamanho_lista_preenchida / num_processos);
     }
 
     // Processo 0 envia por broadcast o tamanho do array local de cada processo
     MPI_Bcast(&local_n, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
     // .Todos os processos alocal o array local para dar sort
-    local_numbers = (int *)malloc(local_n * sizeof(int));
+    vetor_local = (int *)malloc(local_n * sizeof(int));
 
     // Processo 0 divide e envia a lista de input aleatória para todos os processos
     // Cada processo aloca sua fatia da lista no array local_numbers de tamanho local_n
-    MPI_Scatter(input_numbers, local_n, MPI_INT, local_numbers, local_n, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Scatter(vetor_input, local_n, MPI_INT, vetor_local, local_n, MPI_INT, 0, MPI_COMM_WORLD);
 
     // Configurações iniciais do bitonic sort
 
     // Direção da ordenação do array local
     int dir;
-    dir = process_rank % 2;
+    dir = rank % 2;
 
     // Array que cada processo usará para comparar com o seu array local
     buffer_receive = malloc((local_n) * sizeof(int));
@@ -165,13 +165,13 @@ int main(int argc, char *argv[])
     int etapas = Log2N(num_processos);
 
     // Começa o algorítmo de bitonic sort
-    if (process_rank == MASTER)
+    if (rank == MASTER)
     {
         printf("Número de processos criados: %d\n", num_processos);
-        timer_start = MPI_Wtime();
+        timer_inicio = MPI_Wtime();
     }
 
-    sortLocal(local_numbers, local_n, dir);
+    sortLocal(vetor_local, local_n, dir);
 
     // Para N processos, são necessárias log2(N) etapas
     for (i = 0; i < etapas; i++)
@@ -180,20 +180,20 @@ int main(int argc, char *argv[])
         for (j = i; j >= 0; j--)
         {
 
-            if (((process_rank >> (i + 1)) % 2 == 0 && (process_rank >> j) % 2 == 0) ||
-                ((process_rank >> (i + 1)) % 2 != 0 && (process_rank >> j) % 2 != 0))
+            if (((rank >> (i + 1)) % 2 == 0 && (rank >> j) % 2 == 0) ||
+                ((rank >> (i + 1)) % 2 != 0 && (rank >> j) % 2 != 0))
             {
 
-                CompareLow(j);
+                ComparaMantemMenor(j);
             }
             else
             {
-                CompareHigh(j);
+                ComparaMantemMaior(j);
             }
         }
 
-        dir = (process_rank >> i + 1) % 2;
-        sortLocal(local_numbers, local_n, dir);
+        dir = (rank >> i + 1) % 2;
+        sortLocal(vetor_local, local_n, dir);
     }
 
     MPI_Barrier(MPI_COMM_WORLD);
@@ -201,21 +201,21 @@ int main(int argc, char *argv[])
     // Não há mais comparaões, então podemos liberar a memória do buffer
     free(buffer_receive);
 
-    if (process_rank == MASTER)
+    if (rank == MASTER)
     {
-        timer_end = MPI_Wtime();
-        printf("Tempo de execuão: %f segundos\n", timer_end - timer_start);
+        timer_fim = MPI_Wtime();
+        printf("Tempo de execuão: %f segundos\n", timer_fim - timer_inicio);
     }
 
     if (verbose)
     {
-        if (process_rank == MASTER)
+        if (rank == MASTER)
         {
-            qsort(input_numbers, input_n, sizeof(int), ComparisonFunc);
+            qsort(vetor_input, input_n, sizeof(int), ComparisonFunc);
             printf("Resultado esperado (qsort):\n");
             for (i = 0; i < input_n; i++)
             {
-                printf("%d ", input_numbers[i]);
+                printf("%d ", vetor_input[i]);
             }
             printf("\n");
         }
@@ -224,18 +224,18 @@ int main(int argc, char *argv[])
     // Processo 0 recebe todos os arrays locais e os junta em um array global
 
     // Processo 0 imprime os input_n primeiros números do array global
-    MPI_Gather(local_numbers, local_n, MPI_INT, input_numbers, local_n, MPI_INT, 0, MPI_COMM_WORLD);
-    free(local_numbers);
+    MPI_Gather(vetor_local, local_n, MPI_INT, vetor_input, local_n, MPI_INT, 0, MPI_COMM_WORLD);
+    free(vetor_local);
 
     // Checa se a lista foi de fato ordenada
     if (verify)
     {
 
-        if (process_rank == MASTER)
+        if (rank == MASTER)
         {
             for (i = 0; i < input_n - 1; i++)
             {
-                if (input_numbers[i] > input_numbers[i + 1])
+                if (vetor_input[i] > vetor_input[i + 1])
                 {
                     printf("Erro na ordenação. Elemento %d > %d\n", i, i + 1);
                     MPI_Finalize();
@@ -247,21 +247,21 @@ int main(int argc, char *argv[])
 
     if (verbose)
     {
-        if (process_rank == MASTER)
+        if (rank == MASTER)
         {
             printf("Lista ordenada (bitonic sort):\n");
             for (i = 0; i < input_n; i++)
             {
-                printf("%d ", input_numbers[i]);
+                printf("%d ", vetor_input[i]);
             }
             printf("\n");
-            free(input_numbers);
+            free(vetor_input);
         }
     }
     else
     {
         // processo 0 salva os input_n primeiros números do array global em um arquivo de saída
-        if (process_rank == MASTER)
+        if (rank == MASTER)
         {
             FILE *file = fopen("output.txt", "w");
             if (!file)
@@ -273,10 +273,10 @@ int main(int argc, char *argv[])
 
             for (i = 0; i < input_n; i++)
             {
-                fprintf(file, "%d\n", input_numbers[i]);
+                fprintf(file, "%d\n", vetor_input[i]);
             }
             fclose(file);
-            free(input_numbers);
+            free(vetor_input);
         }
     }
 
@@ -284,13 +284,13 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-void CompareLow(int bit)
+void ComparaMantemMenor(int bit)
 {
     MPI_Send(
-        local_numbers,
+        vetor_local,
         local_n,
         MPI_INT,
-        process_rank ^ (1 << bit),
+        rank ^ (1 << bit),
         0,
         MPI_COMM_WORLD);
 
@@ -298,7 +298,7 @@ void CompareLow(int bit)
         buffer_receive,
         local_n,
         MPI_INT,
-        process_rank ^ (1 << bit),
+        rank ^ (1 << bit),
         0,
         MPI_COMM_WORLD,
         MPI_STATUS_IGNORE);
@@ -309,31 +309,31 @@ void CompareLow(int bit)
 
     for (int i = 0; i < local_n; i++)
     {
-        if (local_numbers[i] > buffer_receive[i])
+        if (vetor_local[i] > buffer_receive[i])
         {
-            local_numbers[i] = buffer_receive[i];
+            vetor_local[i] = buffer_receive[i];
         }
     }
 
     return;
 }
 
-void CompareHigh(int bit)
+void ComparaMantemMaior(int bit)
 {
     MPI_Recv(
         buffer_receive,
         local_n,
         MPI_INT,
-        process_rank ^ (1 << bit),
+        rank ^ (1 << bit),
         0,
         MPI_COMM_WORLD,
         MPI_STATUS_IGNORE);
 
     MPI_Send(
-        local_numbers,
+        vetor_local,
         local_n,
         MPI_INT,
-        process_rank ^ (1 << bit),
+        rank ^ (1 << bit),
         0,
         MPI_COMM_WORLD);
 
@@ -343,9 +343,9 @@ void CompareHigh(int bit)
 
     for (int i = 0; i < local_n; i++)
     {
-        if (local_numbers[i] < buffer_receive[i])
+        if (vetor_local[i] < buffer_receive[i])
         {
-            local_numbers[i] = buffer_receive[i];
+            vetor_local[i] = buffer_receive[i];
         }
     }
 
